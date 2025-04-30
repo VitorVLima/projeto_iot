@@ -1,0 +1,6 @@
+flask
+flask-sqlalchemy
+flask-login
+pyjwt - substituir flask-login
+flask-bcrypt
+email-validator
