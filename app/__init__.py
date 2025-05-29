@@ -8,7 +8,7 @@ import os
 app = Flask(__name__)
 
 app.config['SECRET_KEY'] = 'SUFNPSDNU389-90CDJI0JQWOX'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://root:Vi076466@iot-app.ctyss6u6e8fw.us-east-2.rds.amazonaws.com:3306/iot_app'
 #.u=Hyu!uLj+s.48
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
