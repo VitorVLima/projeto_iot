@@ -15,6 +15,7 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False)
 
     mqtt_topic_prefix = db.Column(db.String(100), unique=False, nullable=False)
+    onesignal_player_id = db.Column(db.String(200), nullable=True)
 
     admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     admin = db.relationship('User', remote_side=[id], backref='users')

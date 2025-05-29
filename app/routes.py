@@ -7,6 +7,8 @@ from functools import wraps
 import jwt
 import datetime
 from time import sleep
+import json
+import paho.mqtt.client as mqtt
 
 def token_required(f):
     @wraps(f)
@@ -185,5 +187,124 @@ def listar_usuarios(current_user):
 
     return jsonify(resultado)
 
+ONESIGNAL_APP_ID = "d99c0403-92be-4768-a8d3-9d350711bbbe" # Substitua pelo seu App ID
+ONESIGNAL_REST_API_KEY = "os_v2_app_3goaia4sxzdwrkgttu2qoen3xzklhitstraercelynyr6hig2iwns6aj3762dioip4oswlby3gg5zookpzdfet6vvzo7q4psmthjg3q" # Substitua pela sua REST API Key
 
+def send_onesignal_notification(player_id, title, body, data_payload=None):
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": f"Basic {ONESIGNAL_REST_API_KEY}"
+    }
+
+    payload = {
+        "app_id": ONESIGNAL_APP_ID,
+        "include_player_ids": [player_id],
+        "contents": {"en": body},
+        "headings": {"en": title},
+    }
+
+    if data_payload:
+        payload["data"] = data_payload
+
+    try:
+        response = requests.post("https://onesignal.com/api/v1/notifications", headers=headers, json=payload)
+        response.raise_for_status()
+        print(f"Notificação OneSignal enviada com sucesso: {response.json()}")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Erro ao enviar notificação OneSignal: {e}")
+        return False
+
+# --- Configurações MQTT (já existentes no seu código) ---
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_ALERT_TOPIC = "sensor/alerta/app1234" # Seu tópico onde o ESP32 publica alertas
+
+# Callback de conexão MQTT
+def on_connect(client, userdata, flags, rc):
+    print(f"Conectado ao broker MQTT com código {rc}")
+    client.subscribe(MQTT_ALERT_TOPIC)
+    print(f"Assinado ao tópico: {MQTT_ALERT_TOPIC}")
+
+# Callback de mensagem MQTT
+def on_message(client, userdata, msg):
+    print(f"Mensagem MQTT recebida no tópico {msg.topic}: {msg.payload.decode()}")
+    try:
+        dados_alerta = json.loads(msg.payload.decode())
+
+        batimentos = dados_alerta.get("batimentos")
+        aceleracao = dados_alerta.get("aceleracao")
+
+        # Inicializa as mensagens de alerta
+        alerta_batimentos = ""
+        alerta_aceleracao = ""
+        has_alert = False
+
+        # --- Lógica de Alerta para Batimentos ---
+        if batimentos is not None: # Verifica se o valor existe
+            if batimentos < 5:
+                alerta_batimentos = f"Batimentos cardíacos muito baixos: {batimentos} BPM!"
+                has_alert = True
+            elif batimentos > 95:
+                alerta_batimentos = f"Batimentos cardíacos muito altos: {batimentos} BPM!"
+                has_alert = True
+
+        # --- Lógica de Alerta para Aceleração ---
+        if aceleracao is not None and aceleracao == 0:
+            alerta_aceleracao = "Aceleração detectada igual a 0. Dispositivo pode estar parado!"
+            has_alert = True
+
+        # Se houver qualquer tipo de alerta, envie a notificação
+        if has_alert:
+            # Concatena as mensagens de alerta
+            full_alert_message = ""
+            if alerta_batimentos:
+                full_alert_message += alerta_batimentos
+            if alerta_aceleracao:
+                if full_alert_message: # Adiciona uma quebra de linha se já houver uma mensagem
+                    full_alert_message += "\n"
+                full_alert_message += alerta_aceleracao
+
+            # Busca os usuários para notificar
+            # Em um cenário real, você provavelmente filtraria por usuários
+            # associados a este ESP32 ou a este alerta específico.
+            # Por simplicidade, estamos notificando todos os usuários com player_id.
+            users_to_notify = User.query.filter(User.onesignal_player_id.isnot(None)).all()
+
+            for user in users_to_notify:
+                if user.onesignal_player_id:
+                    print(f"Enviando alerta para {user.email}...")
+                    send_onesignal_notification(
+                        user.onesignal_player_id,
+                        "🚨 Alerta de Saúde Urgente!",
+                        full_alert_message,
+                        dados_alerta # Envia os dados brutos do ESP32 como payload de dados
+                    )
+        else:
+            print("Dados normais, sem alerta necessário.")
+
+    except json.JSONDecodeError:
+        print("Payload MQTT não é um JSON válido.")
+    except Exception as e:
+        print(f"Erro ao processar mensagem MQTT: {e}")
+
+# --- Inicialização do Cliente MQTT (fora das funções) ---
+mqtt_client = mqtt.Client()
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+mqtt_client.loop_start() # Inicia o loop em um thread separado para não bloquear o Flask
+
+@app.route('/registrar_player_id', methods=['POST'])
+@token_required # Associe o Player ID ao usuário logado
+def registrar_player_id(current_user):
+    data = request.get_json()
+    onesignal_player_id = data.get('onesignal_player_id')
+
+    if not onesignal_player_id:
+        return jsonify({"erro": "OneSignal Player ID ausente"}), 400
+
+    current_user.onesignal_player_id = onesignal_player_id
+    db.session.commit()
+    return jsonify({"status": "OneSignal Player ID registrado com sucesso"})
 
